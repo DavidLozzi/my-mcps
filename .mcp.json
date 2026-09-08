@@ -3,6 +3,10 @@
     "gsc": {
       "command": "node",
       "args": ["${MY_MCPS_ROOT:-/Volumes/T9/git/my-mcps}/gsc/dist/index.js"]
+    },
+    "ga4": {
+      "command": "node",
+      "args": ["${MY_MCPS_ROOT:-/Volumes/T9/git/my-mcps}/ga4/dist/index.js"]
     }
   }
 }
