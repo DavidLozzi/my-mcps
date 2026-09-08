@@ -10,7 +10,7 @@
     "build": "tsc",
     "auth": "npm run build && node dist/auth-cli.js",
     "dev": "tsc --watch",
-    "test": "npm run build && node test/smoke.mjs && node test/e2e.mjs",
+    "test": "npm run build && node test/smoke.mjs && node test/credentials.mjs && node test/e2e.mjs",
     "inspect": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "engines": {

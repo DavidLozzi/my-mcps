@@ -44,7 +44,8 @@ Property add/delete is deliberately not exposed.
 3. Under *APIs & Services → OAuth consent screen*, configure the screen and add your own Google
    account as a **test user** (an unpublished app only works for listed test users).
 4. Under *Credentials*, create an **OAuth client ID** of type **Desktop app**.
-5. Download the JSON and save it to `gsc/.credentials/credentials.json`.
+5. Drop the downloaded JSON into `gsc/.credentials/`. Either name works — `credentials.json`,
+   or the `client_secret_….apps.googleusercontent.com.json` name Google gives it.
 
 Alternatively set `GSC_CLIENT_ID` and `GSC_CLIENT_SECRET` in the environment instead of the file.
 
@@ -52,7 +53,8 @@ Alternatively set `GSC_CLIENT_ID` and `GSC_CLIENT_SECRET` in the environment ins
 
 ```bash
 cd gsc
-mkdir -p .credentials      # then drop credentials.json in here
+mkdir -p .credentials      # drop the downloaded OAuth JSON in here
+chmod 700 .credentials
 npm install
 npm run auth
 ```
@@ -107,5 +109,6 @@ npm run inspect   # open the MCP Inspector against the built server
 ```
 
 `npm test` runs entirely offline: `test/smoke.mjs` checks the tool contract and the
-unauthenticated error path, `test/e2e.mjs` drives the analysis tools against a stub Search Console
-serving fixtures whose correct answers are known by construction.
+unauthenticated error path, `test/credentials.mjs` covers OAuth client discovery, and
+`test/e2e.mjs` drives the analysis tools against a stub Search Console serving fixtures whose
+correct answers are known by construction.

@@ -1,5 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,6 +39,32 @@ export interface ClientCredentials {
 }
 
 /**
+ * Locate the OAuth client JSON. Google Cloud Console downloads it as
+ * `client_secret_<id>.apps.googleusercontent.com.json`, so accept that name as
+ * well as the tidier `credentials.json` rather than making the rename a
+ * prerequisite nobody remembers.
+ */
+async function findCredentialsFile(): Promise<string | undefined> {
+  const preferred = credentialsPath();
+  try {
+    await readFile(preferred, "utf8");
+    return preferred;
+  } catch {
+    /* Fall through to the downloaded-name scan. */
+  }
+
+  try {
+    const entries = await readdir(configDir());
+    const match = entries.find(
+      (name) => name.startsWith("client_secret") && name.endsWith(".json"),
+    );
+    return match ? join(configDir(), match) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * OAuth client id/secret come from the environment, or from the JSON file
  * downloaded out of Google Cloud Console (which wraps them in an "installed"
  * or "web" envelope depending on the client type).
@@ -50,24 +76,24 @@ export async function loadClientCredentials(): Promise<ClientCredentials> {
     return { clientId: envId, clientSecret: envSecret };
   }
 
-  let raw: string;
-  try {
-    raw = await readFile(credentialsPath(), "utf8");
-  } catch {
+  const found = await findCredentialsFile();
+  if (!found) {
     throw new NotAuthenticatedError(
-      `No OAuth client credentials found. Set GSC_CLIENT_ID and GSC_CLIENT_SECRET, ` +
-        `or download your Desktop app OAuth client JSON to ${credentialsPath()}.`,
+      `No OAuth client credentials found in ${configDir()}. Set GSC_CLIENT_ID and ` +
+        `GSC_CLIENT_SECRET, or download your Desktop app OAuth client JSON there ` +
+        `(either named credentials.json, or left under its downloaded ` +
+        `client_secret_*.json name).`,
     );
   }
 
-  const parsed = JSON.parse(raw) as Record<string, any>;
+  const parsed = JSON.parse(await readFile(found, "utf8")) as Record<string, any>;
   const envelope = parsed.installed ?? parsed.web ?? parsed;
   const clientId = envelope.client_id;
   const clientSecret = envelope.client_secret;
 
   if (!clientId || !clientSecret) {
     throw new NotAuthenticatedError(
-      `${credentialsPath()} is missing client_id / client_secret. ` +
+      `${found} is missing client_id / client_secret. ` +
         `Re-download the OAuth client JSON from Google Cloud Console.`,
     );
   }
