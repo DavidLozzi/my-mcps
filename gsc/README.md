@@ -44,7 +44,7 @@ Property add/delete is deliberately not exposed.
 3. Under *APIs & Services → OAuth consent screen*, configure the screen and add your own Google
    account as a **test user** (an unpublished app only works for listed test users).
 4. Under *Credentials*, create an **OAuth client ID** of type **Desktop app**.
-5. Download the JSON and save it to `~/.config/gsc-mcp/credentials.json`.
+5. Download the JSON and save it to `gsc/.credentials/credentials.json`.
 
 Alternatively set `GSC_CLIENT_ID` and `GSC_CLIENT_SECRET` in the environment instead of the file.
 
@@ -52,13 +52,17 @@ Alternatively set `GSC_CLIENT_ID` and `GSC_CLIENT_SECRET` in the environment ins
 
 ```bash
 cd gsc
+mkdir -p .credentials      # then drop credentials.json in here
 npm install
 npm run auth
 ```
 
-This opens your browser once, then caches a refresh token to `~/.config/gsc-mcp/token.json`
+This opens your browser once, then caches a refresh token to `gsc/.credentials/token.json`
 (mode `0600`) and prints the properties it can now see. The MCP server itself never runs a browser
 flow — a stdio server has no terminal to drive one — so this step happens out of band.
+
+> `.credentials/` is gitignored at the repo root. Both files grant access to your Search Console
+> data — keep them out of any commit, and out of any other checkout you share.
 
 ### 3. Register with Claude Code
 
@@ -89,7 +93,7 @@ is about 2000/day per property.
 | Variable | Purpose |
 |---|---|
 | `GSC_CLIENT_ID` / `GSC_CLIENT_SECRET` | OAuth client, instead of `credentials.json` |
-| `GSC_CONFIG_DIR` | Override `~/.config/gsc-mcp` |
+| `GSC_CONFIG_DIR` | Relocate the credentials directory (default `gsc/.credentials`) |
 | `GSC_ACCESS_TOKEN` | Use a token minted elsewhere; skips the cached-token flow |
 | `GSC_API_BASE` | Point at a different API host (used by the tests) |
 

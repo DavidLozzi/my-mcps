@@ -6,8 +6,11 @@ dist/
 *.log
 .DS_Store
 
-# Never commit Google OAuth material. These normally live in ~/.config/gsc-mcp,
-# but guard against a stray copy landing in the repo.
+# OAuth material lives next to each server, in <server>/.credentials/.
+# Never commit it.
+.credentials/
+
+# Belt and braces against a stray copy landing anywhere else in the repo.
 credentials.json
 token.json
 *.credentials.json

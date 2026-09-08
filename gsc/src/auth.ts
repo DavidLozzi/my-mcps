@@ -1,6 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,8 +8,12 @@ export const SCOPE = "https://www.googleapis.com/auth/webmasters";
 /** Absolute path to the gsc package root, used in the "run npm run auth" hint. */
 export const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+/**
+ * Credentials live alongside the server in `gsc/.credentials/`, kept out of git
+ * by the repo's .gitignore. Set GSC_CONFIG_DIR to relocate them.
+ */
 export function configDir(): string {
-  return process.env.GSC_CONFIG_DIR ?? join(homedir(), ".config", "gsc-mcp");
+  return process.env.GSC_CONFIG_DIR ?? join(PACKAGE_ROOT, ".credentials");
 }
 
 export function tokenPath(): string {
