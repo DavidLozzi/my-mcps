@@ -2,5 +2,13 @@ node_modules/
 dist/
 .env
 .env.*
+!.env.example
 *.log
 .DS_Store
+
+# Never commit Google OAuth material. These normally live in ~/.config/gsc-mcp,
+# but guard against a stray copy landing in the repo.
+credentials.json
+token.json
+*.credentials.json
+client_secret*.json
