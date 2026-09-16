@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>net.lozzi.my-mcps.mac-helper</string>
+	<key>CFBundleName</key>
+	<string>mac-helper</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>The mac MCP server reads and updates your reminders on behalf of Claude.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>The mac MCP server reads and updates your reminders on behalf of Claude.</string>
+</dict>
+</plist>

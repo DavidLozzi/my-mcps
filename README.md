@@ -8,6 +8,7 @@ Collection of custom Model Context Protocol (MCP) servers.
 |---|---|
 | [gsc](./gsc) | Google Search Console — SEO analysis, index diagnostics, sitemaps |
 | [ga4](./ga4) | Google Analytics 4 — traffic analysis, acquisition, funnels, optimization |
+| [mac](./mac) | macOS apps — Reminders (via EventKit), more to come |
 
 ## Using these with Claude Code
 
@@ -20,6 +21,7 @@ To use a server from anywhere, register it globally:
 ```bash
 claude mcp add gsc -- node /absolute/path/to/my-mcps/gsc/dist/index.js
 claude mcp add ga4 -- node /absolute/path/to/my-mcps/ga4/dist/index.js
+claude mcp add mac -- node /absolute/path/to/my-mcps/mac/dist/index.js
 ```
 
 Each server has its own README with setup and auth steps. Build before first use — the registered
