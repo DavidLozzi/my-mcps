@@ -50,7 +50,7 @@ async function request<T>(
     /* Non-JSON error body; use the raw text. */
   }
 
-  throw new Ga4ApiError(await explain(res.status, googleMessage), res.status);
+  throw new Ga4ApiError(await explain(res.status, googleMessage, path), res.status);
 }
 
 /**
@@ -58,7 +58,7 @@ async function request<T>(
  * 400 over a dimension or metric name that does not exist or cannot be queried
  * alongside the others, so that case points at the two tools that resolve it.
  */
-async function explain(status: number, googleMessage: string): Promise<string> {
+async function explain(status: number, googleMessage: string, path: string): Promise<string> {
   switch (status) {
     case 400:
       return (
@@ -78,7 +78,9 @@ async function explain(status: number, googleMessage: string): Promise<string> {
 
     case 403: {
       let accessible = "";
-      try {
+      // The lookup itself calls accountSummaries; if that is what just failed,
+      // retrying it here would recurse forever.
+      if (!path.startsWith("/v1beta/accountSummaries")) try {
         const accounts = await listProperties();
         const properties = accounts.flatMap((a) =>
           (a.propertySummaries ?? []).map((p) => ({

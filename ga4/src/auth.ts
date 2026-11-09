@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const SCOPE = "https://www.googleapis.com/auth/analytics.edit";
+export const SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 
 /** Absolute path to the ga4 package root, used in the "run npm run auth" hint. */
 export const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

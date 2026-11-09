@@ -67,11 +67,10 @@ This opens your browser once, then caches a refresh token to `ga4/.credentials/t
 (mode `0600`) and prints the properties it can now see. The MCP server itself never runs a browser
 flow — a stdio server has no terminal to drive one — so this step happens out of band.
 
-> **Scope.** The consent flow requests `analytics.edit`, which permits reading *and* changing GA4
-> configuration. No tool in this server writes anything, so the wider grant exists only to avoid a
-> second consent round if a write tool is ever added. To grant read-only access instead, change
-> `SCOPE` in `src/auth.ts` to `https://www.googleapis.com/auth/analytics.readonly` and re-run
-> `npm run auth`.
+> **Scope.** The consent flow requests `analytics.readonly`. It covers both the Admin API reads
+> (property listing, metadata) and Data API reports. `analytics.edit` is *not* a superset: it
+> grants Admin API writes but the Data API rejects it with "insufficient authentication scopes".
+> If a write tool is ever added, request both scopes and re-run `npm run auth`.
 >
 > `.credentials/` is gitignored at the repo root. Both files grant access to your Analytics
 > account — keep them out of any commit, and out of any other checkout you share.
