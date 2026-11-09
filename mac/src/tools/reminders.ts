@@ -4,6 +4,7 @@ import { runHelper } from "../helper.js";
 import { guard, ok } from "../lib/tool.js";
 import {
   DUE_FILTERS,
+  WEEKDAY_KEYS,
   addDays,
   compareReminders,
   filterReminders,
@@ -49,6 +50,12 @@ const recurrenceField = z
   .object({
     frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
     interval: z.number().int().min(1).default(1).describe("Every N days/weeks/months/years."),
+    daysOfWeek: z
+      .array(z.enum(WEEKDAY_KEYS))
+      .min(1)
+      .max(7)
+      .optional()
+      .describe("Weekly only: repeat on these days, e.g. [\"mon\", \"thu\"]."),
     until: dueField.optional().describe("Stop repeating after this date."),
     count: z.number().int().min(1).optional().describe("Stop after this many occurrences."),
   })

@@ -17,6 +17,8 @@ export interface Recurrence {
   interval: number;
   until?: string;
   count?: number;
+  /** Weekly rules only, e.g. ["mon", "wed"]. */
+  daysOfWeek?: string[];
   custom?: boolean;
 }
 
@@ -59,6 +61,9 @@ export const DUE_FILTERS = [
 ] as const;
 
 export type DueFilter = (typeof DUE_FILTERS)[number];
+
+/** Weekday keys the helper accepts in a weekly repeat rule. */
+export const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PRIORITY_RANK: Record<Reminder["priority"], number> = { high: 0, medium: 1, low: 2, none: 3 };
@@ -191,6 +196,7 @@ export function describeDue(r: Reminder, now: Date): string {
 export function describeRecurrence(rule: Recurrence): string {
   const unit = { daily: "day", weekly: "week", monthly: "month", yearly: "year" }[rule.frequency] ?? rule.frequency;
   let text = rule.interval === 1 ? `repeats every ${unit}` : `repeats every ${rule.interval} ${unit}s`;
+  if (rule.daysOfWeek?.length) text += ` on ${rule.daysOfWeek.map((d) => d[0].toUpperCase() + d.slice(1)).join(", ")}`;
   if (rule.until) text += ` until ${rule.until.slice(0, 10)}`;
   if (rule.count) text += ` for ${rule.count} times`;
   if (rule.custom) text += " (custom rule — details not shown)";

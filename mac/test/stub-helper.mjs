@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Stand-in for dist/mac-helper so tests run without Reminders access. Speaks
+ * Stand-in for dist/mac-helper so tests run without Reminders or Calendar access. Speaks
  * the same stdin/stdout protocol, serves fixtures from STUB_FIXTURES, and
  * appends every call to STUB_LOG so tests can assert what the server sent.
  *
@@ -23,11 +23,26 @@ if (process.env.STUB_MODE === "crash") {
   process.stderr.write("dyld: Symbol not found: _EKEventStore\n");
   process.exit(134);
 }
+const CALENDAR_COMMANDS = ["calendars", "events", "event_get", "event_create", "event_update", "event_delete",
+  "calendar_create", "calendar_delete"];
 if (process.env.STUB_MODE === "denied" && command !== "status") {
-  fail("access_denied", "Reminders access is denied.");
+  fail("access_denied", `${CALENDAR_COMMANDS.includes(command) ? "Calendar" : "Reminders"} access is denied.`);
 }
 
-const { lists, reminders } = JSON.parse(readFileSync(process.env.STUB_FIXTURES, "utf8"));
+const { lists, reminders, calendars = [], events = [] } = JSON.parse(readFileSync(process.env.STUB_FIXTURES, "utf8"));
+
+const resolveCalendar = (ref) => {
+  const byId = calendars.find((c) => c.id === ref);
+  if (byId) return byId;
+  const matches = calendars.filter((c) => c.title.toLowerCase() === ref.toLowerCase());
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) fail("calendar_not_found", `No calendar named "${ref}".`);
+  fail("ambiguous_calendar", `${matches.length} calendars are named "${ref}".`);
+};
+
+const findEvent = (id) => events.find((e) => e.id === id) ?? fail("event_not_found", `No event with id ${id}.`);
+// All-day ends are inclusive days; "T99" sorts after any time on that day.
+const endKey = (e) => (e.allDay ? `${e.end}T99` : e.end);
 
 const resolveList = (ref) => {
   const byId = lists.find((l) => l.id === ref);
@@ -41,8 +56,10 @@ const resolveList = (ref) => {
 const find = (id) => reminders.find((r) => r.id === id) ?? fail("not_found", `No reminder with id ${id}.`);
 
 switch (command) {
-  case "status":
-    reply({ ok: true, data: { reminders: process.env.STUB_MODE === "denied" ? "denied" : "full_access" } });
+  case "status": {
+    const state = process.env.STUB_MODE === "denied" ? "denied" : "full_access";
+    reply({ ok: true, data: { reminders: state, calendar: state } });
+  }
   case "lists":
     reply({ ok: true, data: lists });
   case "fetch": {
@@ -98,6 +115,55 @@ switch (command) {
     reply({ ok: true, data: input.ids.map(find) });
   case "create_list":
     reply({ ok: true, data: { id: "NEW-LIST", title: input.title, account: input.account ?? "iCloud" } });
+  case "calendars":
+    reply({ ok: true, data: calendars });
+  case "events": {
+    const ids = input.calendars?.map((ref) => resolveCalendar(ref).id);
+    const data = events.filter(
+      (e) => (!ids || ids.includes(e.calendarId)) && e.start < input.to && endKey(e) > input.from,
+    );
+    reply({ ok: true, data });
+  }
+  case "event_get":
+    reply({ ok: true, data: findEvent(input.id) });
+  case "event_create": {
+    const cal = input.calendar ? resolveCalendar(input.calendar) : calendars.find((c) => c.isDefault);
+    const allDay = !input.start.includes("T");
+    reply({
+      ok: true,
+      data: {
+        ...events[0],
+        id: "NEW-EVENT",
+        title: input.title,
+        calendar: cal.title,
+        calendarId: cal.id,
+        allDay,
+        start: input.start,
+        end: input.end ?? input.start,
+        location: input.location ?? null,
+        notes: input.notes ?? null,
+        attendees: [],
+        organizer: null,
+        myStatus: null,
+        recurring: Boolean(input.recurrence),
+        recurrence: input.recurrence ?? null,
+      },
+    });
+  }
+  case "event_update": {
+    const { id, span, ...fields } = input;
+    reply({ ok: true, data: { ...findEvent(id), ...fields } });
+  }
+  case "event_delete":
+    reply({ ok: true, data: input.ids.map(findEvent) });
+  case "calendar_create":
+    reply({
+      ok: true,
+      data: { id: "NEW-CAL", title: input.title, account: input.account ?? "iCloud", type: "caldav",
+        color: input.color ?? null, isDefault: false, readOnly: false },
+    });
+  case "calendar_delete":
+    reply({ ok: true, data: resolveCalendar(input.calendar) });
   default:
     fail("invalid_input", `Unknown command "${command}".`);
 }

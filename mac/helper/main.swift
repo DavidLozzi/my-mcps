@@ -7,8 +7,10 @@
 // has written a response, so a non-zero exit means the helper itself crashed.
 //
 // Filtering, sorting, and presentation live in the Node server where they can be
-// tested without Reminders access. This file only reads and writes the store.
+// tested without Reminders or Calendar access. This file only reads and writes
+// the store.
 
+import CoreGraphics
 import EventKit
 import Foundation
 
@@ -64,23 +66,39 @@ func statusName(_ status: EKAuthorizationStatus) -> String {
     }
 }
 
-func requireAccess() throws {
-    let status = EKEventStore.authorizationStatus(for: .reminder)
+func entityName(_ type: EKEntityType) -> String {
+    type == .event ? "Calendar" : "Reminders"
+}
+
+/// Reminders and Calendar are separate permissions, each asked for the first
+/// time a command needs it. Denial messages lead with the entity name so the
+/// server can point at the right settings pane.
+func requireAccess(_ type: EKEntityType) throws {
+    let status = EKEventStore.authorizationStatus(for: type)
     switch status {
     case .fullAccess:
         return
     case .notDetermined:
         let (granted, error): (Bool, Error?) = wait { done in
-            store.requestFullAccessToReminders { granted, error in done((granted, error)) }
+            if type == .event {
+                store.requestFullAccessToEvents { granted, error in done((granted, error)) }
+            } else {
+                store.requestFullAccessToReminders { granted, error in done((granted, error)) }
+            }
         }
         if granted { return }
-        throw HelperError(
-            code: "access_denied",
-            message: error?.localizedDescription ?? "Reminders access was not granted."
-        )
+        let reason = error.map { ": \($0.localizedDescription)" } ?? "."
+        throw HelperError(code: "access_denied", message: "\(entityName(type)) access was not granted\(reason)")
     default:
-        throw HelperError(code: "access_denied", message: "Reminders access is \(statusName(status)).")
+        throw HelperError(code: "access_denied", message: "\(entityName(type)) access is \(statusName(status)).")
     }
+}
+
+func accessSummary() -> [String: Any] {
+    [
+        "reminders": statusName(EKEventStore.authorizationStatus(for: .reminder)),
+        "calendar": statusName(EKEventStore.authorizationStatus(for: .event)),
+    ]
 }
 
 // MARK: - Dates
@@ -206,8 +224,16 @@ func serializeAlarm(_ alarm: EKAlarm) -> [String: Any] {
     return ["type": "relative", "minutesBefore": Int((-alarm.relativeOffset / 60).rounded())]
 }
 
+let weekdayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
 func serializeRule(_ rule: EKRecurrenceRule) -> [String: Any] {
     var out: [String: Any] = ["frequency": frequencyName(rule.frequency), "interval": rule.interval]
+    // "Every Mon, Wed" on a weekly rule round-trips; anything subtler does not.
+    let days = rule.daysOfTheWeek ?? []
+    let plainWeekdays = rule.frequency == .weekly && !days.isEmpty && days.allSatisfy { $0.weekNumber == 0 }
+    if plainWeekdays {
+        out["daysOfWeek"] = days.map { weekdayNames[$0.dayOfTheWeek.rawValue - 1] }
+    }
     if let end = rule.recurrenceEnd {
         if let date = end.endDate {
             out["until"] = stamp(date)
@@ -218,7 +244,7 @@ func serializeRule(_ rule: EKRecurrenceRule) -> [String: Any] {
     // Rules built in the Reminders app ("every weekday", "last Friday") carry
     // extra constraints this server cannot round-trip. Flag them so an update
     // does not silently flatten one into a plain interval.
-    let custom = !(rule.daysOfTheWeek ?? []).isEmpty || !(rule.daysOfTheMonth ?? []).isEmpty
+    let custom = (!days.isEmpty && !plainWeekdays) || !(rule.daysOfTheMonth ?? []).isEmpty
         || !(rule.monthsOfTheYear ?? []).isEmpty || !(rule.weeksOfTheYear ?? []).isEmpty
         || !(rule.daysOfTheYear ?? []).isEmpty || !(rule.setPositions ?? []).isEmpty
     if custom { out["custom"] = true }
@@ -255,25 +281,37 @@ func describeList(_ list: EKCalendar) -> String {
     "\"\(list.title)\" (\(list.source?.title ?? "unknown account"), id \(list.calendarIdentifier))"
 }
 
-func resolveList(_ reference: String) throws -> EKCalendar {
-    let lists = reminderLists()
-    if let exact = lists.first(where: { $0.calendarIdentifier == reference }) {
+/// Reminder lists and calendars are both EKCalendars; only the vocabulary in
+/// the errors differs.
+func resolveCalendar(_ reference: String, for type: EKEntityType) throws -> EKCalendar {
+    let (noun, plural, code) = type == .event
+        ? ("calendar", "calendars", "calendar")
+        : ("reminder list", "lists", "list")
+    let all = store.calendars(for: type)
+    if let exact = all.first(where: { $0.calendarIdentifier == reference }) {
         return exact
     }
 
     let wanted = reference.trimmingCharacters(in: .whitespaces)
-    let matches = lists.filter { $0.title.caseInsensitiveCompare(wanted) == .orderedSame }
+    let matches = all.filter { $0.title.caseInsensitiveCompare(wanted) == .orderedSame }
     if matches.count == 1 { return matches[0] }
 
     if matches.isEmpty {
-        let names = lists.map { "\"\($0.title)\"" }.joined(separator: ", ")
-        throw HelperError(code: "list_not_found", message: "No reminder list named \"\(reference)\". Lists: \(names).")
+        let names = all.map { "\"\($0.title)\"" }.joined(separator: ", ")
+        throw HelperError(
+            code: "\(code)_not_found",
+            message: "No \(noun) named \"\(reference)\". \(plural.capitalized): \(names)."
+        )
     }
     let options = matches.map(describeList).joined(separator: "; ")
     throw HelperError(
-        code: "ambiguous_list",
-        message: "\(matches.count) lists are named \"\(reference)\": \(options). Pass the list id instead."
+        code: "ambiguous_\(code)",
+        message: "\(matches.count) \(plural) are named \"\(reference)\": \(options). Pass the \(code) id instead."
     )
+}
+
+func resolveList(_ reference: String) throws -> EKCalendar {
+    try resolveCalendar(reference, for: .reminder)
 }
 
 func findReminder(_ id: String) -> EKReminder? {
@@ -336,7 +374,23 @@ func buildRule(_ value: [String: Any]) throws -> EKRecurrenceRule {
     } else if let count = value["count"] as? Int {
         end = EKRecurrenceEnd(occurrenceCount: count)
     }
-    return EKRecurrenceRule(recurrenceWith: frequency, interval: interval, end: end)
+
+    var weekdays: [EKRecurrenceDayOfWeek]?
+    if let names = value["daysOfWeek"] {
+        guard frequency == .weekly else { throw invalid("recurrence.daysOfWeek only applies to a weekly repeat.") }
+        weekdays = try stringArray(names, "recurrence.daysOfWeek").map { name in
+            guard let index = weekdayNames.firstIndex(of: name.lowercased()), let day = EKWeekday(rawValue: index + 1)
+            else {
+                throw invalid("Unknown weekday \"\(name)\". Use sun, mon, tue, wed, thu, fri, or sat.")
+            }
+            return EKRecurrenceDayOfWeek(day)
+        }
+        if weekdays!.isEmpty { weekdays = nil }
+    }
+    return EKRecurrenceRule(
+        recurrenceWith: frequency, interval: interval, daysOfTheWeek: weekdays, daysOfTheMonth: nil,
+        monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil, end: end
+    )
 }
 
 /// Applies a patch. A key that is absent leaves the field alone; a key set to
@@ -553,17 +607,447 @@ func commandCreateList(_ input: [String: Any]) throws -> Any {
     return ["id": list.calendarIdentifier, "title": list.title, "account": source.title]
 }
 
+// MARK: - Calendar: serialisation
+
+func colorHex(_ color: CGColor?) -> String? {
+    guard let color, let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+          let c = color.converted(to: srgb, intent: .defaultIntent, options: nil)?.components, c.count >= 3
+    else { return nil }
+    return String(format: "#%02X%02X%02X", Int((c[0] * 255).rounded()), Int((c[1] * 255).rounded()), Int((c[2] * 255).rounded()))
+}
+
+func parseColor(_ text: String) throws -> CGColor {
+    var hex = text.trimmingCharacters(in: .whitespaces)
+    if hex.hasPrefix("#") { hex.removeFirst() }
+    guard hex.count == 6, let value = UInt32(hex, radix: 16) else {
+        throw invalid("color must be a hex value like #FF9500.")
+    }
+    return CGColor(
+        srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+        blue: CGFloat(value & 0xFF) / 255, alpha: 1
+    )
+}
+
+func calendarTypeName(_ type: EKCalendarType) -> String {
+    switch type {
+    case .local: return "local"
+    case .calDAV: return "caldav"
+    case .exchange: return "exchange"
+    case .subscription: return "subscription"
+    case .birthday: return "birthday"
+    @unknown default: return "unknown"
+    }
+}
+
+func availabilityName(_ value: EKEventAvailability) -> String {
+    switch value {
+    case .busy: return "busy"
+    case .free: return "free"
+    case .tentative: return "tentative"
+    case .unavailable: return "unavailable"
+    default: return "not_supported"
+    }
+}
+
+func availabilityValue(_ name: String) throws -> EKEventAvailability {
+    switch name {
+    case "busy": return .busy
+    case "free": return .free
+    case "tentative": return .tentative
+    case "unavailable": return .unavailable
+    default: throw invalid("Unknown availability \"\(name)\". Use busy, free, tentative, or unavailable.")
+    }
+}
+
+func eventStatusName(_ value: EKEventStatus) -> String {
+    switch value {
+    case .confirmed: return "confirmed"
+    case .tentative: return "tentative"
+    case .canceled: return "canceled"
+    default: return "none"
+    }
+}
+
+func participantStatusName(_ value: EKParticipantStatus) -> String {
+    switch value {
+    case .pending: return "pending"
+    case .accepted: return "accepted"
+    case .declined: return "declined"
+    case .tentative: return "tentative"
+    case .delegated: return "delegated"
+    case .completed: return "completed"
+    case .inProcess: return "in_process"
+    default: return "unknown"
+    }
+}
+
+func participantRoleName(_ value: EKParticipantRole) -> String {
+    switch value {
+    case .required: return "required"
+    case .optional: return "optional"
+    case .chair: return "chair"
+    case .nonParticipant: return "non_participant"
+    default: return "unknown"
+    }
+}
+
+func participantTypeName(_ value: EKParticipantType) -> String {
+    switch value {
+    case .person: return "person"
+    case .room: return "room"
+    case .resource: return "resource"
+    case .group: return "group"
+    default: return "unknown"
+    }
+}
+
+func serializeParticipant(_ participant: EKParticipant) -> [String: Any] {
+    let address = participant.url.absoluteString
+    let email = address.lowercased().hasPrefix("mailto:") ? String(address.dropFirst("mailto:".count)) : nil
+    var out: [String: Any] = [
+        "name": participant.name ?? "",
+        "status": participantStatusName(participant.participantStatus),
+        "role": participantRoleName(participant.participantRole),
+        "type": participantTypeName(participant.participantType),
+        "isMe": participant.isCurrentUser,
+    ]
+    out["email"] = email ?? NSNull()
+    return out
+}
+
+func dayString(_ date: Date) -> String {
+    let c = calendar.dateComponents([.year, .month, .day], from: date)
+    return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
+}
+
+/// Every occurrence of a repeating event shares one eventIdentifier, so the id
+/// handed out appends the occurrence's original start. Without it an edit meant
+/// for next Tuesday would land on the first meeting of the series.
+func occurrenceKey(_ event: EKEvent) -> String? {
+    guard event.hasRecurrenceRules || event.isDetached else { return nil }
+    return stamp(event.occurrenceDate ?? event.startDate)
+}
+
+func eventId(_ event: EKEvent) -> String {
+    let base: String = event.eventIdentifier ?? event.calendarItemIdentifier
+    return occurrenceKey(event).map { "\(base)::\($0)" } ?? base
+}
+
+func serializeEvent(_ event: EKEvent) -> [String: Any] {
+    var out: [String: Any] = [
+        "id": eventId(event),
+        "title": event.title ?? "",
+        "calendar": event.calendar?.title ?? "",
+        "calendarId": event.calendar?.calendarIdentifier ?? "",
+        "allDay": event.isAllDay,
+        "availability": availabilityName(event.availability),
+        "status": eventStatusName(event.status),
+        "recurring": event.hasRecurrenceRules,
+        "detached": event.isDetached,
+        "alarms": (event.alarms ?? []).map(serializeAlarm),
+        "attendees": (event.attendees ?? []).map(serializeParticipant),
+        "readOnly": !(event.calendar?.allowsContentModifications ?? false),
+    ]
+    if event.isAllDay {
+        // All-day ends are stored as the last moment of the final day (or the
+        // next midnight); either way the inclusive last day is one second back.
+        out["start"] = dayString(event.startDate)
+        out["end"] = dayString(event.endDate > event.startDate ? event.endDate.addingTimeInterval(-1) : event.startDate)
+    } else {
+        out["start"] = stamp(event.startDate)
+        out["end"] = stamp(event.endDate)
+    }
+    out["location"] = event.location.flatMap { $0.isEmpty ? nil : $0 } ?? NSNull()
+    out["notes"] = event.notes ?? NSNull()
+    out["url"] = event.url?.absoluteString ?? NSNull()
+    out["timeZone"] = event.timeZone?.identifier ?? NSNull()
+    out["organizer"] = event.organizer.map(serializeParticipant) ?? NSNull()
+    out["myStatus"] = (event.attendees ?? []).first(where: { $0.isCurrentUser })
+        .map { participantStatusName($0.participantStatus) } ?? NSNull()
+    out["recurrence"] = event.recurrenceRules?.first.map(serializeRule) ?? NSNull()
+    out["occurrence"] = occurrenceKey(event) ?? NSNull()
+    out["created"] = event.creationDate.map(stamp) ?? NSNull()
+    out["modified"] = event.lastModifiedDate.map(stamp) ?? NSNull()
+    return out
+}
+
+func serializeCalendar(_ cal: EKCalendar, defaultId: String?) -> [String: Any] {
+    var out: [String: Any] = [
+        "id": cal.calendarIdentifier,
+        "title": cal.title,
+        "account": cal.source?.title ?? "",
+        "type": calendarTypeName(cal.type),
+        "isDefault": cal.calendarIdentifier == defaultId,
+        "readOnly": !cal.allowsContentModifications,
+    ]
+    out["color"] = colorHex(cal.cgColor) ?? NSNull()
+    return out
+}
+
+// MARK: - Calendar: lookup and fields
+
+func requireEvent(_ id: String) throws -> EKEvent {
+    let notFound = HelperError(code: "event_not_found", message: "No event with id \(id).")
+    guard let split = id.range(of: "::", options: .backwards) else {
+        guard let event = store.event(withIdentifier: id) else { throw notFound }
+        return event
+    }
+
+    let base = String(id[..<split.lowerBound])
+    let key = String(id[split.upperBound...])
+    let when = try parseInstant(key)
+    // A moved occurrence keeps its original date as the key, so search a
+    // generous window around it rather than the exact day.
+    let window: TimeInterval = 31 * 86_400
+    let predicate = store.predicateForEvents(
+        withStart: when.addingTimeInterval(-window), end: when.addingTimeInterval(window), calendars: nil
+    )
+    guard let match = store.events(matching: predicate).first(where: {
+        $0.eventIdentifier == base && occurrenceKey($0) == key
+    }) else { throw notFound }
+    return match
+}
+
+func parseSpan(_ value: Any?) throws -> EKSpan {
+    switch value as? String {
+    case nil, "this": return .thisEvent
+    case "future": return .futureEvents
+    default: throw invalid("span must be this or future.")
+    }
+}
+
+/// `YYYY-MM-DD` is all-day; a time is read in the event's own time zone.
+func parseEventTime(_ text: String, in zone: TimeZone) throws -> (date: Date, allDay: Bool) {
+    var components = try parseDue(text)
+    let allDay = components.hour == nil
+    if allDay {
+        components.hour = 0
+        components.minute = 0
+    } else {
+        components.timeZone = zone
+    }
+    guard let date = calendar.date(from: components) else { throw invalid("Invalid date \"\(text)\".") }
+    return (date, allDay)
+}
+
+/// Same patch rules as reminders: absent leaves a field alone, null clears it.
+func applyEvent(_ fields: [String: Any], to event: EKEvent, isNew: Bool) throws {
+    if let name = fields["timeZone"] as? String {
+        guard let zone = TimeZone(identifier: name) else {
+            throw invalid("Unknown time zone \"\(name)\". Use an IANA name like America/New_York.")
+        }
+        event.timeZone = zone
+    }
+    let zone = event.timeZone ?? TimeZone.current
+
+    if let title = fields["title"] as? String {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw invalid("title cannot be empty.")
+        }
+        event.title = title
+    }
+
+    if let reference = fields["calendar"] as? String {
+        let target = try resolveCalendar(reference, for: .event)
+        guard target.allowsContentModifications else {
+            throw HelperError(code: "read_only", message: "The calendar \(describeList(target)) is read-only.")
+        }
+        event.calendar = target
+    }
+
+    if fields.keys.contains("location") { event.location = fields["location"] as? String }
+    if fields.keys.contains("notes") { event.notes = fields["notes"] as? String }
+
+    if fields.keys.contains("url") {
+        if let text = fields["url"] as? String {
+            guard let url = URL(string: text), url.scheme != nil else { throw invalid("Invalid url \"\(text)\".") }
+            event.url = url
+        } else {
+            event.url = nil
+        }
+    }
+
+    if let availability = fields["availability"] as? String {
+        event.availability = try availabilityValue(availability)
+    }
+
+    let oldStart: Date? = event.startDate
+    let oldEnd: Date? = event.endDate
+    let oldAllDay = event.isAllDay
+    let endText = fields["end"] as? String
+
+    if let startText = fields["start"] as? String {
+        let (start, allDay) = try parseEventTime(startText, in: zone)
+        event.isAllDay = allDay
+        event.startDate = start
+        if endText == nil {
+            // Moving an event keeps its length; a new one gets an hour, or one day.
+            if !isNew, allDay == oldAllDay, let oldStart, let oldEnd {
+                event.endDate = start.addingTimeInterval(oldEnd.timeIntervalSince(oldStart))
+            } else {
+                event.endDate = allDay ? start : start.addingTimeInterval(3600)
+            }
+        }
+    }
+
+    if let endText {
+        guard let start = event.startDate else { throw invalid("start is required.") }
+        let (end, allDay) = try parseEventTime(endText, in: zone)
+        guard allDay == event.isAllDay else {
+            throw invalid("start and end must both be dates (all-day) or both be date-times.")
+        }
+        guard end >= start else { throw invalid("end is before start.") }
+        event.endDate = end
+    }
+
+    if fields.keys.contains("alarms") {
+        let kept = (event.alarms ?? []).filter { $0.structuredLocation != nil }
+        let fresh = fields["alarms"] is NSNull ? [] : try buildAlarms(fields["alarms"])
+        event.alarms = kept + fresh
+    }
+
+    if fields.keys.contains("recurrence") {
+        if let rule = fields["recurrence"] as? [String: Any] {
+            event.recurrenceRules = [try buildRule(rule)]
+        } else {
+            event.recurrenceRules = nil
+        }
+    }
+}
+
+// MARK: - Calendar: commands
+
+func commandCalendars() -> Any {
+    let defaultId = store.defaultCalendarForNewEvents?.calendarIdentifier
+    return store.calendars(for: .event).map { serializeCalendar($0, defaultId: defaultId) }
+}
+
+func commandEvents(_ input: [String: Any]) throws -> Any {
+    guard let fromText = input["from"] as? String, let toText = input["to"] as? String else {
+        throw invalid("from and to are required.")
+    }
+    let from = try parseInstant(fromText)
+    let to = try parseInstant(toText)
+    guard to > from else { throw invalid("to must be after from.") }
+    let calendars: [EKCalendar]? = try input["calendars"].map {
+        try stringArray($0, "calendars").map { try resolveCalendar($0, for: .event) }
+    }
+    return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: calendars))
+        .map(serializeEvent)
+}
+
+func commandEventGet(_ input: [String: Any]) throws -> Any {
+    guard let id = input["id"] as? String else { throw invalid("id is required.") }
+    return serializeEvent(try requireEvent(id))
+}
+
+func commandEventCreate(_ input: [String: Any]) throws -> Any {
+    guard input["title"] is String else { throw invalid("title is required.") }
+    guard input["start"] is String else { throw invalid("start is required.") }
+    guard let fallback = store.defaultCalendarForNewEvents else {
+        throw HelperError(code: "calendar_not_found", message: "There is no default calendar. Pass a calendar.")
+    }
+
+    let event = EKEvent(eventStore: store)
+    event.calendar = fallback
+    event.timeZone = TimeZone.current
+    try applyEvent(input, to: event, isNew: true)
+    try store.save(event, span: .thisEvent, commit: true)
+    return serializeEvent(event)
+}
+
+func commandEventUpdate(_ input: [String: Any]) throws -> Any {
+    guard let id = input["id"] as? String else { throw invalid("id is required.") }
+    let span = try parseSpan(input["span"])
+    let event = try requireEvent(id)
+    var fields = input
+    fields.removeValue(forKey: "id")
+    fields.removeValue(forKey: "span")
+    try applyEvent(fields, to: event, isNew: false)
+    try store.save(event, span: span, commit: true)
+    return serializeEvent(event)
+}
+
+func commandEventDelete(_ input: [String: Any]) throws -> Any {
+    let ids = try stringArray(input["ids"], "ids")
+    let span = try parseSpan(input["span"])
+    let events = try ids.map(requireEvent)
+    let snapshot = events.map(serializeEvent)
+
+    for event in events {
+        try store.remove(event, span: span, commit: false)
+    }
+    try store.commit()
+    return snapshot
+}
+
+func commandCalendarCreate(_ input: [String: Any]) throws -> Any {
+    guard let title = input["title"] as? String,
+          !title.trimmingCharacters(in: .whitespaces).isEmpty
+    else {
+        throw invalid("title is required.")
+    }
+
+    let source: EKSource
+    if let account = input["account"] as? String {
+        let candidates = store.sources.filter {
+            $0.title.caseInsensitiveCompare(account) == .orderedSame && !$0.calendars(for: .event).isEmpty
+        }
+        guard let match = candidates.first else {
+            let names = Set(store.calendars(for: .event).compactMap { $0.source?.title }).sorted().joined(separator: ", ")
+            throw HelperError(code: "account_not_found", message: "No calendar account named \"\(account)\". Accounts: \(names).")
+        }
+        source = match
+    } else {
+        guard let fallback = store.defaultCalendarForNewEvents?.source else {
+            throw HelperError(code: "account_not_found", message: "There is no default calendar account. Pass an account.")
+        }
+        source = fallback
+    }
+
+    let cal = EKCalendar(for: .event, eventStore: store)
+    cal.title = title
+    cal.source = source
+    if let color = input["color"] as? String {
+        cal.cgColor = try parseColor(color)
+    }
+    try store.saveCalendar(cal, commit: true)
+    return serializeCalendar(cal, defaultId: store.defaultCalendarForNewEvents?.calendarIdentifier)
+}
+
+func commandCalendarDelete(_ input: [String: Any]) throws -> Any {
+    guard let reference = input["calendar"] as? String else { throw invalid("calendar is required.") }
+    let cal = try resolveCalendar(reference, for: .event)
+    guard !cal.isImmutable else {
+        throw HelperError(code: "read_only", message: "The calendar \(describeList(cal)) cannot be deleted.")
+    }
+    let snapshot = serializeCalendar(cal, defaultId: store.defaultCalendarForNewEvents?.calendarIdentifier)
+    try store.removeCalendar(cal, commit: true)
+    return snapshot
+}
+
 // MARK: - Entry point
+
+let calendarCommands: Set<String> = [
+    "calendars", "events", "event_get", "event_create", "event_update", "event_delete",
+    "calendar_create", "calendar_delete",
+]
 
 func run(_ command: String, _ input: [String: Any]) throws -> Any {
     // status must work without access, or there is no way to diagnose a denial.
     if command == "status" {
-        return ["reminders": statusName(EKEventStore.authorizationStatus(for: .reminder))]
+        return accessSummary()
+    }
+    if command == "authorize" {
+        // Ask for each independently, so declining one still prompts for the other.
+        for type in [EKEntityType.reminder, .event] {
+            try? requireAccess(type)
+        }
+        return accessSummary()
     }
 
-    try requireAccess()
+    try requireAccess(calendarCommands.contains(command) ? .event : .reminder)
     switch command {
-    case "authorize": return ["reminders": statusName(EKEventStore.authorizationStatus(for: .reminder))]
     case "lists": return commandLists()
     case "fetch": return try commandFetch(input)
     case "get": return try commandGet(input)
@@ -572,8 +1056,60 @@ func run(_ command: String, _ input: [String: Any]) throws -> Any {
     case "set_completed": return try commandSetCompleted(input)
     case "delete": return try commandDelete(input)
     case "create_list": return try commandCreateList(input)
+    case "calendars": return commandCalendars()
+    case "events": return try commandEvents(input)
+    case "event_get": return try commandEventGet(input)
+    case "event_create": return try commandEventCreate(input)
+    case "event_update": return try commandEventUpdate(input)
+    case "event_delete": return try commandEventDelete(input)
+    case "calendar_create": return try commandCalendarCreate(input)
+    case "calendar_delete": return try commandCalendarDelete(input)
     default: throw invalid("Unknown command \"\(command)\".")
     }
+}
+
+// MARK: - Responsibility
+
+// macOS charges privacy access to the "responsible" app: whatever launched the
+// process tree. Claude.app declares no Calendar or Reminders usage text, so
+// requests made on its behalf are refused without a prompt. Re-launching
+// ourselves with responsibility disclaimed makes this helper its own
+// responsible process, using the usage text in its embedded Info.plist, and
+// one grant then holds whichever app starts the server.
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
+
+let disclaimedMarker = "MAC_HELPER_DISCLAIMED"
+
+func relaunchDisclaimed() -> Never {
+    guard let path = Bundle.main.executablePath else {
+        respond(["ok": false, "code": "internal", "message": "Could not locate the helper executable."])
+    }
+    var attrs: posix_spawnattr_t?
+    posix_spawnattr_init(&attrs)
+    defer { posix_spawnattr_destroy(&attrs) }
+    _ = responsibility_spawnattrs_setdisclaim(&attrs, 1)
+
+    var env = ProcessInfo.processInfo.environment
+    env[disclaimedMarker] = "1"
+    let argv = CommandLine.arguments.map { strdup($0) } + [nil]
+    let envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
+
+    // stdin, stdout and stderr are inherited, so the child speaks the protocol directly.
+    var pid: pid_t = 0
+    let rc = posix_spawn(&pid, path, nil, &attrs, argv, envp)
+    guard rc == 0 else {
+        respond(["ok": false, "code": "internal", "message": "Could not relaunch the helper: \(String(cString: strerror(rc)))."])
+    }
+    var status: Int32 = 0
+    while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+    // Mirror the child's exit so a crash still reads as a crash to the server.
+    let signal = status & 0x7F
+    exit(signal == 0 ? (status >> 8) & 0xFF : 128 + signal)
+}
+
+if ProcessInfo.processInfo.environment[disclaimedMarker] == nil {
+    relaunchDisclaimed()
 }
 
 let arguments = CommandLine.arguments

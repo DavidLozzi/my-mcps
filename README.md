@@ -8,7 +8,7 @@ Collection of custom Model Context Protocol (MCP) servers.
 |---|---|
 | [gsc](./gsc) | Google Search Console — SEO analysis, index diagnostics, sitemaps |
 | [ga4](./ga4) | Google Analytics 4 — traffic analysis, acquisition, funnels, optimization |
-| [mac](./mac) | macOS apps — Reminders (via EventKit), more to come |
+| [mac](./mac) | macOS apps — Reminders and Calendar (via EventKit) |
 
 ## Using these with Claude Code
 

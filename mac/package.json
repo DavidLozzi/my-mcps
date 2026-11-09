@@ -1,7 +1,7 @@
 {
   "name": "mac-mcp",
-  "version": "0.1.0",
-  "description": "Local MCP server for the macOS ecosystem — Reminders via EventKit",
+  "version": "0.2.0",
+  "description": "Local MCP server for the macOS ecosystem — Reminders and Calendar via EventKit",
   "type": "module",
   "os": [
     "darwin"
@@ -14,7 +14,7 @@
     "build:helper": "mkdir -p dist && swiftc -O -swift-version 5 helper/main.swift -o dist/mac-helper -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker helper/Info.plist",
     "authorize": "npm run build && node dist/authorize-cli.js",
     "dev": "tsc --watch",
-    "test": "npm run build && node test/smoke.mjs && node test/e2e.mjs",
+    "test": "npm run build && node test/smoke.mjs && node test/e2e.mjs && node test/calendar.mjs",
     "inspect": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "engines": {

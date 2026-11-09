@@ -34,15 +34,24 @@ function explain(code: string, message: string): string {
   switch (code) {
     case "access_denied":
       return (
-        `${message} Grant it in System Settings → Privacy & Security → Reminders, enabling the app that ` +
-        "launched this server (your terminal, or Claude). If it is not listed, run `npm run authorize` in " +
-        "the mac/ directory from that app to trigger the macOS prompt, then restart the MCP server."
+        `${message} Grant it in System Settings → Privacy & Security → ` +
+        `${message.startsWith("Calendar") ? "Calendars" : "Reminders"} and enable mac-helper. If it is not ` +
+        "listed, run `npm run authorize` in the mac/ directory from any terminal and click Allow on the macOS " +
+        "prompts, then restart the MCP server."
       );
     case "not_found":
       return `${message} Ids come from reminders_list; a deleted or completed-and-cleared reminder no longer resolves.`;
     case "list_not_found":
     case "ambiguous_list":
       return `${message} reminders_list_lists shows every list with its id.`;
+    case "event_not_found":
+      return (
+        `${message} Ids come from calendar_list_events, and a repeating event's id names one occurrence; ` +
+        "a deleted event or a moved occurrence no longer resolves."
+      );
+    case "calendar_not_found":
+    case "ambiguous_calendar":
+      return `${message} calendar_list_calendars shows every calendar with its id.`;
     default:
       return message;
   }
@@ -67,7 +76,7 @@ export async function runHelper<T>(command: string, input: object = {}): Promise
       reject(
         new HelperError(
           "timeout",
-          `The Reminders helper did not answer within ${TIMEOUT_MS / 1000}s. If a macOS permission dialog ` +
+          `The EventKit helper did not answer within ${TIMEOUT_MS / 1000}s. If a macOS permission dialog ` +
             "is open, answer it and retry.",
         ),
       );
@@ -77,7 +86,7 @@ export async function runHelper<T>(command: string, input: object = {}): Promise
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
     child.on("error", (err) => {
       clearTimeout(timer);
-      reject(new HelperError("spawn_failed", `Could not run the Reminders helper: ${err.message}`));
+      reject(new HelperError("spawn_failed", `Could not run the EventKit helper: ${err.message}`));
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
@@ -85,9 +94,9 @@ export async function runHelper<T>(command: string, input: object = {}): Promise
         resolve(stdout);
       } else {
         // A crash here is almost always TCC killing a process that touched
-        // Reminders without a usage description, or a missing dylib.
+        // Reminders or Calendar without a usage description, or a missing dylib.
         const detail = stderr.trim().split("\n").slice(-3).join(" ") || `exit ${code ?? signal}`;
-        reject(new HelperError("helper_crashed", `The Reminders helper crashed: ${detail}`));
+        reject(new HelperError("helper_crashed", `The EventKit helper crashed: ${detail}`));
       }
     });
 
@@ -98,12 +107,12 @@ export async function runHelper<T>(command: string, input: object = {}): Promise
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new HelperError("bad_response", `The Reminders helper returned unreadable output: ${raw.slice(0, 200)}`);
+    throw new HelperError("bad_response", `The EventKit helper returned unreadable output: ${raw.slice(0, 200)}`);
   }
 
   if (!parsed.ok) {
     const code = parsed.code ?? "unknown";
-    throw new HelperError(code, explain(code, parsed.message ?? "The Reminders helper reported an error."));
+    throw new HelperError(code, explain(code, parsed.message ?? "The EventKit helper reported an error."));
   }
   return parsed.data as T;
 }

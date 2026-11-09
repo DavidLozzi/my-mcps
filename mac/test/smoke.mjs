@@ -32,30 +32,39 @@ for (const t of tools) {
     .filter(Boolean)
     .join(",");
   console.log(
-    `  ${t.name.padEnd(24)} [${flags}]  ${(t.title ?? "").padEnd(26)} params: ${Object.keys(t.inputSchema.properties ?? {}).length}`,
+    `  ${t.name.padEnd(26)} [${flags}]  ${(t.title ?? "").padEnd(26)} params: ${Object.keys(t.inputSchema.properties ?? {}).length}`,
   );
 }
 
 const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
 
 console.log("\nCONTRACT:");
-expect("all 8 tools registered", tools.length === 8);
+expect("all 17 tools registered", tools.length === 17);
 expect("every tool has a title", tools.every((t) => t.title));
 expect("every tool has a description", tools.every((t) => (t.description ?? "").length > 40));
-expect("every tool name is reminders_-prefixed", tools.every((t) => t.name.startsWith("reminders_")));
+expect(
+  "every tool name is reminders_- or calendar_-prefixed",
+  tools.every((t) => t.name.startsWith("reminders_") || t.name.startsWith("calendar_")),
+);
 expect(
   "read tools are marked read-only",
-  ["reminders_list_lists", "reminders_list", "reminders_get"].every((n) => byName[n]?.annotations?.readOnlyHint),
+  [
+    "reminders_list_lists", "reminders_list", "reminders_get",
+    "calendar_list_calendars", "calendar_list_events", "calendar_get_event", "calendar_find_free_time",
+  ].every((n) => byName[n]?.annotations?.readOnlyHint),
 );
 expect(
   "write tools are not marked read-only",
-  ["reminders_create", "reminders_update", "reminders_complete", "reminders_delete", "reminders_create_list"].every(
-    (n) => byName[n]?.annotations?.readOnlyHint === false,
-  ),
+  [
+    "reminders_create", "reminders_update", "reminders_complete", "reminders_delete", "reminders_create_list",
+    "calendar_create_event", "calendar_update_event", "calendar_delete_events", "calendar_create_calendar",
+    "calendar_delete_calendar",
+  ].every((n) => byName[n]?.annotations?.readOnlyHint === false),
 );
 expect(
-  "only delete is destructive",
-  tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).join() === "reminders_delete",
+  "only the delete tools are destructive",
+  tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).sort().join() ===
+    "calendar_delete_calendar,calendar_delete_events,reminders_delete",
 );
 
 console.log("\nMISSING HELPER:");
@@ -71,6 +80,9 @@ console.log("\nINPUT VALIDATION:");
 const badDue = await client.callTool({ name: "reminders_create", arguments: { title: "x", due: "next tuesday" } });
 expect("rejects a natural-language due date before calling the helper", badDue.isError === true);
 expect("the rejection is about the date format, not the helper", !badDue.content[0].text.includes("npm run build"));
+const badStart = await client.callTool({ name: "calendar_create_event", arguments: { title: "x", start: "tomorrow 3pm" } });
+expect("rejects a natural-language event start before calling the helper", badStart.isError === true &&
+  !badStart.content[0].text.includes("npm run build"));
 
 await client.close();
 

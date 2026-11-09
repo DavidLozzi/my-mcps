@@ -10,5 +10,9 @@
 	<string>The mac MCP server reads and updates your reminders on behalf of Claude.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>The mac MCP server reads and updates your reminders on behalf of Claude.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>The mac MCP server reads and updates your calendar events on behalf of Claude.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>The mac MCP server reads and updates your calendar events on behalf of Claude.</string>
 </dict>
 </plist>
