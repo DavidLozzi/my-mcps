@@ -11,6 +11,14 @@
     "mac": {
       "command": "node",
       "args": ["${MY_MCPS_ROOT:-/Volumes/T9/git/my-mcps}/mac/dist/index.js"]
+    },
+    "zoho": {
+      "command": "node",
+      "args": ["${MY_MCPS_ROOT:-/Volumes/T9/git/my-mcps}/zoho/dist/index.js"]
+    },
+    "adsense": {
+      "command": "node",
+      "args": ["${MY_MCPS_ROOT:-/Volumes/T9/git/my-mcps}/adsense/dist/index.js"]
     }
   }
 }
